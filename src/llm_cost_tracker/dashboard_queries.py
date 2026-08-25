@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 import asyncpg
 
+from .tenancy import TenantIdentity
+
 
 @dataclass(frozen=True)
 class DashboardData:
@@ -20,13 +22,20 @@ async def fetch_dashboard_data(
     start_date: date,
     end_date: date,
     provider: Optional[str] = None,
+    tenant_id: Optional[Any] = None,
 ) -> DashboardData:
     """Fetch aggregate metadata only; raw prompts and responses are never queried."""
     connection = await asyncpg.connect(database_url)
     end_exclusive = end_date + timedelta(days=1)
     try:
         providers = await connection.fetch(
-            "SELECT DISTINCT provider FROM llm_usage ORDER BY provider"
+            """
+            SELECT DISTINCT provider
+            FROM llm_usage
+            WHERE tenant_id IS NOT DISTINCT FROM $1::uuid
+            ORDER BY provider
+            """,
+            tenant_id,
         )
         summary = await connection.fetchrow(
             """
@@ -49,10 +58,12 @@ async def fetch_dashboard_data(
             WHERE occurred_at >= $1::date
               AND occurred_at < $2::date
               AND ($3::text IS NULL OR provider = $3)
+              AND tenant_id IS NOT DISTINCT FROM $4::uuid
             """,
             start_date,
             end_exclusive,
             provider,
+            tenant_id,
         )
         daily_rows = await connection.fetch(
             """
@@ -65,18 +76,42 @@ async def fetch_dashboard_data(
             WHERE occurred_at >= $1::date
               AND occurred_at < $2::date
               AND ($3::text IS NULL OR provider = $3)
+              AND tenant_id IS NOT DISTINCT FROM $4::uuid
             GROUP BY occurred_at::date, provider
             ORDER BY day, provider
             """,
             start_date,
             end_exclusive,
             provider,
+            tenant_id,
         )
         return DashboardData(
             providers=[row["provider"] for row in providers],
             summary=dict(summary or {}),
             daily_costs=[dict(row) for row in daily_rows],
         )
+    finally:
+        await connection.close()
+
+
+async def resolve_dashboard_tenant(
+    database_url: str, key_hash: str
+) -> Optional[TenantIdentity]:
+    connection = await asyncpg.connect(database_url)
+    try:
+        row = await connection.fetchrow(
+            """
+            SELECT tenants.id, tenants.slug, tenants.name
+            FROM tenant_api_keys
+            JOIN tenants ON tenants.id = tenant_api_keys.tenant_id
+            WHERE tenant_api_keys.key_hash = $1
+              AND tenant_api_keys.revoked_at IS NULL
+            """,
+            key_hash,
+        )
+        if not row:
+            return None
+        return TenantIdentity(id=row["id"], slug=row["slug"], name=row["name"])
     finally:
         await connection.close()
 

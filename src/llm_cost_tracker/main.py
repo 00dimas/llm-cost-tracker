@@ -14,6 +14,7 @@ from .config import Settings
 from .database import PostgresUsageRepository, create_pool, safely_save
 from .logging import configure_logging, log_usage
 from .pricing import PriceCatalog
+from .tenancy import TenantIdentity, bearer_token
 
 
 def _token_usage(body: Any) -> Tuple[Optional[int], Optional[int], Optional[int]]:
@@ -45,6 +46,9 @@ def create_app(
         )
         pool = None
         app.state.usage_repository = usage_repository
+        if resolved_settings.multi_tenant_enabled and not resolved_settings.database_url:
+            if usage_repository is None:
+                raise RuntimeError("DATABASE_URL is required in multi-tenant mode")
         if usage_repository is None and resolved_settings.database_url:
             pool = await create_pool(resolved_settings.database_url)
             app.state.usage_repository = PostgresUsageRepository(pool)
@@ -72,7 +76,21 @@ def create_app(
         request: Request,
         authorization: Optional[str] = Header(default=None),
     ) -> Response:
-        if resolved_settings.proxy_api_key:
+        tenant: Optional[TenantIdentity] = None
+        if resolved_settings.multi_tenant_enabled:
+            token = bearer_token(authorization)
+            repository = request.app.state.usage_repository
+            if not token or repository is None or not hasattr(repository, "resolve_tenant"):
+                raise HTTPException(status_code=401, detail="Invalid tenant API key")
+            try:
+                tenant = await repository.resolve_tenant(token)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503, detail="Tenant authentication unavailable"
+                ) from exc
+            if tenant is None:
+                raise HTTPException(status_code=401, detail="Invalid tenant API key")
+        elif resolved_settings.proxy_api_key:
             expected = f"Bearer {resolved_settings.proxy_api_key}"
             if authorization != expected:
                 raise HTTPException(status_code=401, detail="Invalid proxy API key")
@@ -140,6 +158,7 @@ def create_app(
                 "estimated_cost_usd": (
                     str(estimated_cost) if estimated_cost is not None else None
                 ),
+                "tenant_id": str(tenant.id) if tenant is not None else None,
             }
             log_usage(metadata)
             await safely_save(request.app.state.usage_repository, metadata)
@@ -148,6 +167,7 @@ def create_app(
                 resolved_settings.daily_budget_usd,
                 resolved_settings.monthly_budget_usd,
                 resolved_settings.alert_webhook_url,
+                tenant.id if tenant is not None else None,
             )
 
     return app

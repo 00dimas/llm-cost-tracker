@@ -2,7 +2,7 @@
 
 Dashboard monitoring biaya dan latency panggilan API LLM lintas provider.
 
-> Status: **M3 selesai** — budget alert dan percentile latency tersedia.
+> Status: **M4 selesai** — seluruh roadmap blueprint selesai, termasuk multi-tenant.
 
 ## Ringkasan
 
@@ -43,9 +43,9 @@ App → LLM Proxy (log request + cost) → LLM Provider
 | M1 | Simpan ke Postgres + pricing table 3 provider | ✅ Selesai |
 | M2 | Dashboard basic (chart biaya harian) | ✅ Selesai |
 | M3 | Alert threshold + latency percentile | ✅ Selesai |
-| M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) | Belum dimulai |
+| M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) | ✅ Selesai |
 
-## Menjalankan M3
+## Menjalankan sistem
 
 Persyaratan: Python 3.9 atau lebih baru.
 
@@ -99,6 +99,42 @@ Alert tidak membawa prompt/response dan hanya dikirim sekali untuk kombinasi per
 nilai threshold. Jalankan ulang `python -m llm_cost_tracker.migrate` setelah mengambil
 versi M3 untuk membuat tabel deduplikasi `budget_alerts`.
 
+### Multi-tenant
+
+Mode multi-tenant bersifat opt-in agar instalasi single-tenant lama tetap kompatibel.
+Jalankan migrasi terbaru, buat tenant, lalu aktifkan mode tersebut:
+
+```bash
+python -m llm_cost_tracker.migrate
+python -m llm_cost_tracker.tenants create \
+  --slug acme \
+  --name 'Acme Corporation' \
+  --key-name production
+```
+
+CLI menampilkan API key satu kali. Database hanya menyimpan SHA-256 hash, prefix untuk
+identifikasi operasional, dan waktu pencabutan. Simpan key tersebut di secret manager,
+bukan di repository. Setelah set `MULTI_TENANT_ENABLED=true`, aplikasi pemanggil wajib
+mengirim key tenant:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Authorization: Bearer llmct_REPLACE_WITH_TENANT_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"Halo"}]}'
+```
+
+Dashboard meminta key yang sama dan hanya menampilkan usage, biaya, provider, serta
+percentile latency milik tenant tersebut. Alert budget juga dihitung dan dideduplikasi
+per tenant. Record sebelum M4 tetap memiliki `tenant_id = null` dan hanya terlihat saat
+mode multi-tenant tidak aktif.
+
+Cabut key yang bocor atau tidak digunakan dengan:
+
+```bash
+python -m llm_cost_tracker.tenants revoke --slug acme --key-name production
+```
+
 Secara default proxy meneruskan request ke OpenAI. `LLM_PROVIDER` juga mendukung `groq`
 dan `gemini` melalui endpoint OpenAI-compatible. Untuk provider lain, isi
 `LLM_BASE_URL` secara eksplisit.
@@ -132,8 +168,9 @@ Jika model belum terdaftar, request tetap disimpan tetapi `estimated_cost_usd` b
 migrasi. Bila `DATABASE_URL` tidak diisi, aplikasi tetap berjalan dengan console logging
 sebagai fallback.
 
-Untuk membatasi akses ke proxy, isi `PROXY_API_KEY` lalu kirim
-`Authorization: Bearer <PROXY_API_KEY>` dari aplikasi pemanggil.
+Untuk membatasi akses dalam mode single-tenant, isi `PROXY_API_KEY` lalu kirim
+`Authorization: Bearer <PROXY_API_KEY>` dari aplikasi pemanggil. Dalam mode
+multi-tenant, gunakan tenant API key dan abaikan `PROXY_API_KEY`.
 
 Jalankan tes dengan:
 

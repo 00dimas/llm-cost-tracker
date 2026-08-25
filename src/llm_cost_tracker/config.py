@@ -26,6 +26,18 @@ def _optional_decimal(name: str) -> Optional[Decimal]:
     return value
 
 
+def _boolean(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True)
 class Settings:
     provider: str
@@ -37,6 +49,7 @@ class Settings:
     daily_budget_usd: Optional[Decimal] = None
     monthly_budget_usd: Optional[Decimal] = None
     alert_webhook_url: Optional[str] = None
+    multi_tenant_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -57,4 +70,5 @@ class Settings:
             daily_budget_usd=_optional_decimal("DAILY_BUDGET_USD"),
             monthly_budget_usd=_optional_decimal("MONTHLY_BUDGET_USD"),
             alert_webhook_url=os.getenv("ALERT_WEBHOOK_URL") or None,
+            multi_tenant_enabled=_boolean("MULTI_TENANT_ENABLED"),
         )

@@ -10,9 +10,10 @@ from llm_cost_tracker.database import PostgresUsageRepository
 
 def test_emits_claimed_budget_alert_to_console(caplog) -> None:
     class Repository:
-        async def claim_budget_alerts(self, daily, monthly):
+        async def claim_budget_alerts(self, daily, monthly, tenant_id):
             assert daily == Decimal("10")
             assert monthly is None
+            assert tenant_id is None
             return [
                 {
                     "period_type": "daily",
@@ -34,6 +35,7 @@ def test_emits_claimed_budget_alert_to_console(caplog) -> None:
         "period_start": "2026-08-25",
         "threshold_usd": "10",
         "actual_cost_usd": "12.50",
+        "tenant_id": None,
     }
 
 
@@ -54,7 +56,7 @@ def test_repository_claims_daily_and_monthly_alerts_atomically() -> None:
 
     assert alerts == []
     assert len(pool.calls) == 2
-    assert pool.calls[0][1][1:] == ("daily", Decimal("10"))
-    assert pool.calls[1][1][1:] == ("monthly", Decimal("100"))
+    assert pool.calls[0][1][1:] == ("daily", Decimal("10"), None)
+    assert pool.calls[1][1][1:] == ("monthly", Decimal("100"), None)
     assert pool.calls[1][1][0].day == 1
     assert "ON CONFLICT" in pool.calls[0][0]

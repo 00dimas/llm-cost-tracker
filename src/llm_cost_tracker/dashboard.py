@@ -4,12 +4,17 @@ import asyncio
 import os
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 
-from llm_cost_tracker.dashboard_queries import DashboardData, fetch_dashboard_data
+from llm_cost_tracker.dashboard_queries import (
+    DashboardData,
+    fetch_dashboard_data,
+    resolve_dashboard_tenant,
+)
+from llm_cost_tracker.tenancy import hash_api_key
 
 
 st.set_page_config(page_title="LLM Cost Tracker", page_icon="💸", layout="wide")
@@ -23,10 +28,15 @@ def load_data(
     start_date: date,
     end_date: date,
     provider: Optional[str],
+    tenant_id: Optional[Any],
 ) -> DashboardData:
     return asyncio.run(
-        fetch_dashboard_data(database_url, start_date, end_date, provider)
+        fetch_dashboard_data(database_url, start_date, end_date, provider, tenant_id)
     )
+
+
+def authenticate_tenant(database_url: str, key_hash: str):
+    return asyncio.run(resolve_dashboard_tenant(database_url, key_hash))
 
 
 def normalize_range(value: object) -> Tuple[date, date]:
@@ -43,6 +53,25 @@ if not database_url:
     st.error("DATABASE_URL belum dikonfigurasi. Isi variabel tersebut lalu muat ulang.")
     st.stop()
 
+multi_tenant_enabled = os.getenv("MULTI_TENANT_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+tenant_id = None
+if multi_tenant_enabled:
+    dashboard_key = st.sidebar.text_input("Tenant API key", type="password")
+    if not dashboard_key:
+        st.info("Masukkan tenant API key untuk membuka dashboard.")
+        st.stop()
+    tenant = authenticate_tenant(database_url, hash_api_key(dashboard_key))
+    if tenant is None:
+        st.error("Tenant API key tidak valid atau sudah dicabut.")
+        st.stop()
+    tenant_id = tenant.id
+    st.sidebar.success(f"Tenant: {tenant.name}")
+
 today = date.today()
 selected_range = st.sidebar.date_input(
     "Rentang tanggal",
@@ -52,7 +81,7 @@ selected_range = st.sidebar.date_input(
 start_date, end_date = normalize_range(selected_range)
 
 try:
-    initial_data = load_data(database_url, start_date, end_date, None)
+    initial_data = load_data(database_url, start_date, end_date, None, tenant_id)
 except Exception as exc:
     st.error("Dashboard tidak dapat membaca Postgres. Pastikan database dan migrasi aktif.")
     st.caption(f"Detail teknis: {type(exc).__name__}")
@@ -64,7 +93,7 @@ provider = None if selected_provider == "Semua provider" else selected_provider
 data = (
     initial_data
     if provider is None
-    else load_data(database_url, start_date, end_date, provider)
+    else load_data(database_url, start_date, end_date, provider, tenant_id)
 )
 
 summary = data.summary

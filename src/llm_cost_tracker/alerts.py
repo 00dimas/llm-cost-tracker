@@ -16,6 +16,7 @@ async def evaluate_budget_alerts(
     daily_threshold: Optional[Decimal],
     monthly_threshold: Optional[Decimal],
     webhook_url: Optional[str],
+    tenant_id: Optional[Any] = None,
 ) -> None:
     if repository is None or not hasattr(repository, "claim_budget_alerts"):
         return
@@ -23,7 +24,7 @@ async def evaluate_budget_alerts(
         return
     try:
         alerts = await repository.claim_budget_alerts(
-            daily_threshold, monthly_threshold
+            daily_threshold, monthly_threshold, tenant_id
         )
         for alert in alerts:
             payload = _serialize_alert(alert)
@@ -46,4 +47,5 @@ def _serialize_alert(alert: Dict[str, Any]) -> Dict[str, Any]:
         "period_start": str(alert["period_start"]),
         "threshold_usd": str(alert["threshold_usd"]),
         "actual_cost_usd": str(alert["actual_cost_usd"]),
+        "tenant_id": str(alert["tenant_id"]) if alert.get("tenant_id") else None,
     }

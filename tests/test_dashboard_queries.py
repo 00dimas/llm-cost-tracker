@@ -1,6 +1,7 @@
 import asyncio
 from datetime import date
 from decimal import Decimal
+import uuid
 
 from llm_cost_tracker.dashboard_queries import fetch_dashboard_data
 
@@ -47,12 +48,14 @@ def test_fetches_aggregates_with_safe_filters(monkeypatch) -> None:
         return connection
 
     monkeypatch.setattr("asyncpg.connect", fake_connect)
+    tenant_id = uuid.uuid4()
     data = asyncio.run(
         fetch_dashboard_data(
             "postgresql://example",
             date(2026, 8, 1),
             date(2026, 8, 25),
             "openai",
+            tenant_id,
         )
     )
 
@@ -64,6 +67,8 @@ def test_fetches_aggregates_with_safe_filters(monkeypatch) -> None:
         date(2026, 8, 1),
         date(2026, 8, 26),
         "openai",
+        tenant_id,
     )
     assert "$3::text" in connection.calls[1][0]
+    assert "tenant_id IS NOT DISTINCT FROM $4::uuid" in connection.calls[1][0]
     assert connection.closed is True

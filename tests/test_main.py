@@ -1,6 +1,7 @@
 import json
 import logging
 from typing import Optional
+import uuid
 
 import httpx
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from llm_cost_tracker.config import Settings
 from llm_cost_tracker.main import create_app
 from llm_cost_tracker.pricing import PriceCatalog
+from llm_cost_tracker.tenancy import TenantIdentity
 
 
 def settings(**overrides: object) -> Settings:
@@ -158,3 +160,42 @@ def test_persistence_failure_does_not_break_proxy_response(caplog) -> None:
 
     assert response.status_code == 200
     assert "Failed to persist LLM usage metadata" in caplog.text
+
+
+def test_multi_tenant_mode_authenticates_and_tags_usage() -> None:
+    tenant_id = uuid.uuid4()
+
+    class TenantRepository:
+        def __init__(self) -> None:
+            self.saved = []
+
+        async def resolve_tenant(self, api_key):
+            if api_key == "tenant-secret":
+                return TenantIdentity(tenant_id, "acme", "Acme")
+            return None
+
+        async def save(self, metadata):
+            self.saved.append(metadata)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [], "usage": {}})
+
+    repository = TenantRepository()
+    app = create_app(
+        settings(multi_tenant_enabled=True),
+        httpx.MockTransport(handler),
+        usage_repository=repository,
+    )
+    with TestClient(app) as client:
+        unauthorized = client.post(
+            "/v1/chat/completions", json={"model": "test-model"}
+        )
+        authorized = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer tenant-secret"},
+            json={"model": "test-model"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert repository.saved[0]["tenant_id"] == str(tenant_id)
