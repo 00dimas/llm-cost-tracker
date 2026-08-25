@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-cost-tracker"
+version = "0.1.0"
+description = "Privacy-first proxy for tracking LLM usage metadata"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "asyncpg>=0.29,<1.0",
+  "fastapi>=0.115,<1.0",
+  "httpx>=0.27,<1.0",
+  "pandas>=2.0,<3.0",
+  "streamlit>=1.40,<1.50",
+  "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0,<9.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_cost_tracker"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/llm_cost_tracker/data" = "llm_cost_tracker/data"
+"src/llm_cost_tracker/migrations" = "llm_cost_tracker/migrations"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

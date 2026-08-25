@@ -2,7 +2,7 @@
 
 Dashboard monitoring biaya dan latency panggilan API LLM lintas provider.
 
-> Status: **Blueprint** — belum ada kode.
+> Status: **M2 selesai** — metadata dan estimasi biaya divisualisasikan di dashboard.
 
 ## Ringkasan
 
@@ -37,13 +37,93 @@ App → LLM Proxy (log request + cost) → LLM Provider
 
 ## Roadmap
 
-| # | Milestone |
+| # | Milestone | Status |
+|---|---|---|
+| M0 | Proxy sederhana, log ke console | ✅ Selesai |
+| M1 | Simpan ke Postgres + pricing table 3 provider | ✅ Selesai |
+| M2 | Dashboard basic (chart biaya harian) | ✅ Selesai |
+| M3 | Alert threshold + latency percentile | Belum dimulai |
+| M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) | Belum dimulai |
+
+## Menjalankan M2
+
+Persyaratan: Python 3.9 atau lebih baru.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+cp .env.example .env
+```
+
+Isi `LLM_API_KEY` dan `DATABASE_URL` di `.env`. Postgres lokal dapat dijalankan dengan:
+
+```bash
+docker compose up -d postgres
+```
+
+Muat konfigurasi, jalankan migrasi, lalu mulai server:
+
+```bash
+set -a
+source .env
+set +a
+python -m llm_cost_tracker.migrate
+uvicorn llm_cost_tracker.main:app --reload
+```
+
+Di terminal lain dengan environment yang sama, jalankan dashboard:
+
+```bash
+streamlit run src/llm_cost_tracker/dashboard.py
+```
+
+Dashboard tersedia secara default di `http://localhost:8501`. Tampilan menyediakan
+filter rentang tanggal dan provider, ringkasan biaya/request/token/cakupan harga, chart
+biaya harian, serta tabel agregat. Query dashboard hanya membaca metadata dari
+`llm_usage`; isi prompt dan response tidak digunakan.
+
+Secara default proxy meneruskan request ke OpenAI. `LLM_PROVIDER` juga mendukung `groq`
+dan `gemini` melalui endpoint OpenAI-compatible. Untuk provider lain, isi
+`LLM_BASE_URL` secara eksplisit.
+
+Contoh request:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"Halo"}]}'
+```
+
+Setiap request menghasilkan satu baris JSON di console dan satu record `llm_usage` di
+Postgres. Data hanya memuat request ID, provider, model, status HTTP, latency, token
+input/output/total, serta estimasi biaya USD. Isi prompt dan response tidak dicatat.
+Streaming belum didukung.
+
+Harga model dikelola dari satu sumber di
+`src/llm_cost_tracker/data/pricing.json`. Migrasi menyinkronkan harga tersebut ke tabel
+`model_pricing` dengan mekanisme upsert. Harga awal diverifikasi pada 25 Agustus 2026
+dari halaman resmi provider dan mencakup:
+
+| Provider | Model |
 |---|---|
-| M0 | Proxy sederhana, log ke console |
-| M1 | Simpan ke Postgres + pricing table 3 provider |
-| M2 | Dashboard basic (chart biaya harian) |
-| M3 | Alert threshold + latency percentile |
-| M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) |
+| OpenAI | `gpt-5-mini` |
+| Groq | `openai/gpt-oss-120b` |
+| Gemini | `gemini-2.5-flash` |
+
+Jika model belum terdaftar, request tetap disimpan tetapi `estimated_cost_usd` bernilai
+`null`. Untuk memperbarui harga, edit satu berkas JSON tersebut dan jalankan ulang
+migrasi. Bila `DATABASE_URL` tidak diisi, aplikasi tetap berjalan dengan console logging
+sebagai fallback.
+
+Untuk membatasi akses ke proxy, isi `PROXY_API_KEY` lalu kirim
+`Authorization: Bearer <PROXY_API_KEY>` dari aplikasi pemanggil.
+
+Jalankan tes dengan:
+
+```bash
+pytest
+```
 
 ## Catatan
 
