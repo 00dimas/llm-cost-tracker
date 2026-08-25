@@ -32,3 +32,6 @@ packages = ["src/llm_cost_tracker"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+  "integration: requires a real PostgreSQL database",
+]

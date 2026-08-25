@@ -2,7 +2,7 @@
 
 Dashboard monitoring biaya dan latency panggilan API LLM lintas provider.
 
-> Status: **M4 selesai** — seluruh roadmap blueprint selesai, termasuk multi-tenant.
+> Status: **M5 selesai** — roadmap blueprint dan fondasi production hardening tersedia.
 
 ## Ringkasan
 
@@ -44,6 +44,7 @@ App → LLM Proxy (log request + cost) → LLM Provider
 | M2 | Dashboard basic (chart biaya harian) | ✅ Selesai |
 | M3 | Alert threshold + latency percentile | ✅ Selesai |
 | M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) | ✅ Selesai |
+| M5 | PostgreSQL integration test + CI | ✅ Selesai |
 
 ## Menjalankan sistem
 
@@ -177,6 +178,24 @@ Jalankan tes dengan:
 ```bash
 pytest
 ```
+
+Tanpa `TEST_DATABASE_URL`, integration test PostgreSQL dilewati dan hanya unit test yang
+dijalankan. Untuk menjalankan semua tes terhadap database khusus yang aman dihapus:
+
+```bash
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/llm_cost_tracker_test \
+  pytest -q
+```
+
+Integration test menjalankan seluruh migrasi dua kali untuk memeriksa idempotensi,
+memastikan tiga seed pricing tersedia, lalu menguji persistence, autentikasi tenant,
+isolasi dashboard, dan deduplikasi budget alert. Database pada URL tersebut akan
+menjalankan `TRUNCATE` terhadap tabel aplikasi; jangan arahkan ke database development
+atau production.
+
+Workflow GitHub Actions di `.github/workflows/ci.yml` otomatis menjalankan unit dan
+integration test dengan service PostgreSQL 16 untuk setiap push ke `main` dan pull
+request.
 
 ## Catatan
 
