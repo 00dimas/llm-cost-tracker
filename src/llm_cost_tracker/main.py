@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from .alerts import evaluate_budget_alerts
 from .config import Settings
 from .database import PostgresUsageRepository, create_pool, safely_save
 from .logging import configure_logging, log_usage
@@ -142,6 +143,12 @@ def create_app(
             }
             log_usage(metadata)
             await safely_save(request.app.state.usage_repository, metadata)
+            await evaluate_budget_alerts(
+                request.app.state.usage_repository,
+                resolved_settings.daily_budget_usd,
+                resolved_settings.monthly_budget_usd,
+                resolved_settings.alert_webhook_url,
+            )
 
     return app
 

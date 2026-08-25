@@ -2,7 +2,7 @@
 
 Dashboard monitoring biaya dan latency panggilan API LLM lintas provider.
 
-> Status: **M2 selesai** — metadata dan estimasi biaya divisualisasikan di dashboard.
+> Status: **M3 selesai** — budget alert dan percentile latency tersedia.
 
 ## Ringkasan
 
@@ -42,10 +42,10 @@ App → LLM Proxy (log request + cost) → LLM Provider
 | M0 | Proxy sederhana, log ke console | ✅ Selesai |
 | M1 | Simpan ke Postgres + pricing table 3 provider | ✅ Selesai |
 | M2 | Dashboard basic (chart biaya harian) | ✅ Selesai |
-| M3 | Alert threshold + latency percentile | Belum dimulai |
+| M3 | Alert threshold + latency percentile | ✅ Selesai |
 | M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) | Belum dimulai |
 
-## Menjalankan M2
+## Menjalankan M3
 
 Persyaratan: Python 3.9 atau lebih baru.
 
@@ -80,8 +80,24 @@ streamlit run src/llm_cost_tracker/dashboard.py
 
 Dashboard tersedia secara default di `http://localhost:8501`. Tampilan menyediakan
 filter rentang tanggal dan provider, ringkasan biaya/request/token/cakupan harga, chart
-biaya harian, serta tabel agregat. Query dashboard hanya membaca metadata dari
-`llm_usage`; isi prompt dan response tidak digunakan.
+biaya harian, p50/p95/p99 latency, serta tabel agregat. Query dashboard hanya membaca
+metadata dari `llm_usage`; isi prompt dan response tidak digunakan.
+
+### Budget alert
+
+Threshold bersifat opsional dan dikonfigurasi dalam USD melalui `.env`:
+
+```bash
+DAILY_BUDGET_USD=10.00
+MONTHLY_BUDGET_USD=200.00
+# ALERT_WEBHOOK_URL=https://example.com/hooks/llm-budget
+```
+
+Tanpa `ALERT_WEBHOOK_URL`, alert ditulis sebagai JSON ke console. Jika URL diisi, proxy
+mengirim `POST` JSON berisi jenis periode, awal periode, threshold, dan biaya aktual.
+Alert tidak membawa prompt/response dan hanya dikirim sekali untuk kombinasi periode dan
+nilai threshold. Jalankan ulang `python -m llm_cost_tracker.migrate` setelah mengambil
+versi M3 untuk membuat tabel deduplikasi `budget_alerts`.
 
 Secara default proxy meneruskan request ke OpenAI. `LLM_PROVIDER` juga mendukung `groq`
 dan `gemini` melalui endpoint OpenAI-compatible. Untuk provider lain, isi

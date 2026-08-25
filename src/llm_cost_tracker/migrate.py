@@ -12,11 +12,11 @@ from .pricing import PriceCatalog
 async def migrate(database_url: str) -> None:
     connection = await asyncpg.connect(database_url)
     try:
-        sql = files("llm_cost_tracker").joinpath(
-            "migrations/001_initial.sql"
-        ).read_text(encoding="utf-8")
         async with connection.transaction():
-            await connection.execute(sql)
+            migrations = files("llm_cost_tracker").joinpath("migrations")
+            for migration in sorted(migrations.iterdir(), key=lambda item: item.name):
+                if migration.name.endswith(".sql"):
+                    await connection.execute(migration.read_text(encoding="utf-8"))
             catalog = PriceCatalog.load()
             await connection.executemany(
                 """

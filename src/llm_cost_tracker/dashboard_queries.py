@@ -35,7 +35,16 @@ async def fetch_dashboard_data(
                 COALESCE(SUM(estimated_cost_usd), 0)::numeric AS total_cost_usd,
                 COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
                 COUNT(*) FILTER (WHERE estimated_cost_usd IS NULL)::bigint
-                    AS unpriced_request_count
+                    AS unpriced_request_count,
+                percentile_cont(0.50) WITHIN GROUP (
+                    ORDER BY latency_ms::double precision
+                ) AS latency_p50_ms,
+                percentile_cont(0.95) WITHIN GROUP (
+                    ORDER BY latency_ms::double precision
+                ) AS latency_p95_ms,
+                percentile_cont(0.99) WITHIN GROUP (
+                    ORDER BY latency_ms::double precision
+                ) AS latency_p99_ms
             FROM llm_usage
             WHERE occurred_at >= $1::date
               AND occurred_at < $2::date
@@ -78,4 +87,7 @@ def empty_summary() -> Dict[str, Any]:
         "total_cost_usd": Decimal("0"),
         "total_tokens": 0,
         "unpriced_request_count": 0,
+        "latency_p50_ms": None,
+        "latency_p95_ms": None,
+        "latency_p99_ms": None,
     }

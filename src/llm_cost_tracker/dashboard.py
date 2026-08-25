@@ -82,6 +82,13 @@ priced_percentage = (
 )
 coverage_col.metric("Cakupan harga", f"{priced_percentage:.1f}%")
 
+st.subheader("Latency")
+latency_cols = st.columns(3)
+for column, percentile in zip(latency_cols, ("p50", "p95", "p99")):
+    value = summary.get(f"latency_{percentile}_ms")
+    formatted = f"{float(value):,.2f} ms" if value is not None else "—"
+    column.metric(percentile.upper(), formatted)
+
 st.subheader("Biaya harian")
 if not data.daily_costs:
     st.info("Belum ada data pada rentang dan provider yang dipilih.")

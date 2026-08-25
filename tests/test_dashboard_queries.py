@@ -30,6 +30,9 @@ class FakeConnection:
             "total_cost_usd": Decimal("1.25"),
             "total_tokens": 5000,
             "unpriced_request_count": 1,
+            "latency_p50_ms": 100.0,
+            "latency_p95_ms": 450.0,
+            "latency_p99_ms": 900.0,
         }
 
     async def close(self):
@@ -55,6 +58,7 @@ def test_fetches_aggregates_with_safe_filters(monkeypatch) -> None:
 
     assert data.providers == ["gemini", "openai"]
     assert data.summary["total_cost_usd"] == Decimal("1.25")
+    assert data.summary["latency_p95_ms"] == 450.0
     assert data.daily_costs[0]["request_count"] == 4
     assert connection.calls[1][1] == (
         date(2026, 8, 1),

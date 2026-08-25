@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 
@@ -12,6 +13,19 @@ PROVIDER_BASE_URLS = {
 }
 
 
+def _optional_decimal(name: str) -> Optional[Decimal]:
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return None
+    try:
+        value = Decimal(raw_value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{name} must be a decimal number") from exc
+    if value < 0:
+        raise ValueError(f"{name} must not be negative")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     provider: str
@@ -20,6 +34,9 @@ class Settings:
     timeout_seconds: float = 60.0
     proxy_api_key: Optional[str] = None
     database_url: Optional[str] = None
+    daily_budget_usd: Optional[Decimal] = None
+    monthly_budget_usd: Optional[Decimal] = None
+    alert_webhook_url: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,4 +54,7 @@ class Settings:
             timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "60")),
             proxy_api_key=os.getenv("PROXY_API_KEY") or None,
             database_url=os.getenv("DATABASE_URL") or None,
+            daily_budget_usd=_optional_decimal("DAILY_BUDGET_USD"),
+            monthly_budget_usd=_optional_decimal("MONTHLY_BUDGET_USD"),
+            alert_webhook_url=os.getenv("ALERT_WEBHOOK_URL") or None,
         )
