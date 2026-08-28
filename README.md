@@ -1,54 +1,37 @@
 # LLM Cost Tracker
 
-Dashboard monitoring biaya dan latency panggilan API LLM lintas provider.
+A lightweight proxy and dashboard for tracking cost and latency of LLM API calls across providers.
 
-> Status: **M5 selesai** — roadmap blueprint dan fondasi production hardening tersedia.
+## What it does
 
-## Ringkasan
+The proxy sits in front of OpenAI/Anthropic-compatible providers (OpenAI, Groq, Gemini via their OpenAI-compatible endpoints) and logs every request — tokens in/out, estimated cost, latency, status — so a team can see which provider or endpoint is the most expensive or the slowest.
 
-Middleware/proxy ringan yang mencatat setiap panggilan ke OpenAI/Anthropic/Groq/Gemini —
-token in/out, biaya estimasi, latency — lalu divisualisasikan di dashboard supaya tim bisa
-lihat provider dan endpoint mana yang paling mahal atau paling lambat.
+- **Proxy layer**: a single FastAPI gateway that forwards chat completion requests to the configured provider, transparent to the calling application.
+- **Cost calculation**: pricing is kept in one JSON file (`src/llm_cost_tracker/data/pricing.json`) and synced into a `model_pricing` table via migration upserts — no hardcoded prices scattered through the code. Requests for unlisted models are still stored, with `estimated_cost_usd` left `null`.
+- **Dashboard**: a Streamlit app with date-range and provider filters, cost/request/token summaries, daily cost charts, p50/p95/p99 latency, and an aggregate table. It only reads usage metadata — prompt and response bodies are never stored or displayed.
+- **Budget alerting**: optional daily/monthly USD thresholds. Without a webhook URL, alerts are logged as JSON to the console; with one configured, the proxy POSTs a JSON payload (period, threshold, actual cost — never prompt/response content) once per period+threshold combination.
+- **Multi-tenant mode**: opt-in, so single-tenant installs keep working unchanged. Tenants get an API key that's shown once and stored only as a SHA-256 hash plus a lookup prefix; the dashboard and budget alerts are scoped per tenant when the mode is enabled.
+- **Privacy by default**: logging captures only metadata — request ID, provider, model, HTTP status, latency, token counts, estimated cost — never prompt or response content.
 
-## Fitur utama
+## Architecture
 
-- **Proxy layer**: wrap semua panggilan LLM lewat satu gateway, transparan ke aplikasi
-- **Cost calculation**: pricing table per model/provider, mudah di-update
-- **Dashboard**: breakdown biaya per endpoint/fitur/user, tren harian
-- **Alerting**: notifikasi kalau budget harian/bulanan lewat threshold
-- **Latency tracking**: p50/p95/p99 per provider, bantu keputusan routing model
-- **Export**: laporan CSV/JSON untuk billing internal
-
-## Arsitektur
-
-```
+```text
 App → LLM Proxy (log request + cost) → LLM Provider
-  → response dicatat → Dashboard baca dari DB
+  → response recorded → Dashboard reads from Postgres
 ```
 
-## Stack (free-tier)
+## Stack
 
-| Layer | Komponen |
+| Layer | Component |
 |---|---|
 | Proxy | FastAPI |
-| Storage time-series | Postgres / Timescale |
-| Dashboard | Next.js atau Streamlit |
-| Hosting | Render / Railway free tier |
+| Storage | PostgreSQL |
+| Dashboard | Streamlit |
+| CI | GitHub Actions with a PostgreSQL 16 service container |
 
-## Roadmap
+## Replicating this project
 
-| # | Milestone | Status |
-|---|---|---|
-| M0 | Proxy sederhana, log ke console | ✅ Selesai |
-| M1 | Simpan ke Postgres + pricing table 3 provider | ✅ Selesai |
-| M2 | Dashboard basic (chart biaya harian) | ✅ Selesai |
-| M3 | Alert threshold + latency percentile | ✅ Selesai |
-| M4 | Multi-tenant (kalau mau dikembangkan jadi tool yang dijual) | ✅ Selesai |
-| M5 | PostgreSQL integration test + CI | ✅ Selesai |
-
-## Menjalankan sistem
-
-Persyaratan: Python 3.9 atau lebih baru.
+Requirements: Python 3.9+.
 
 ```bash
 python -m venv .venv
@@ -57,13 +40,13 @@ pip install -e '.[dev]'
 cp .env.example .env
 ```
 
-Isi `LLM_API_KEY` dan `DATABASE_URL` di `.env`. Postgres lokal dapat dijalankan dengan:
+Fill in `LLM_API_KEY` and `DATABASE_URL` in `.env`. A local Postgres instance can be started with:
 
 ```bash
 docker compose up -d postgres
 ```
 
-Muat konfigurasi, jalankan migrasi, lalu mulai server:
+Load the environment, run migrations, then start the server:
 
 ```bash
 set -a
@@ -73,20 +56,25 @@ python -m llm_cost_tracker.migrate
 uvicorn llm_cost_tracker.main:app --reload
 ```
 
-Di terminal lain dengan environment yang sama, jalankan dashboard:
+In another terminal with the same environment, run the dashboard:
 
 ```bash
 streamlit run src/llm_cost_tracker/dashboard.py
 ```
 
-Dashboard tersedia secara default di `http://localhost:8501`. Tampilan menyediakan
-filter rentang tanggal dan provider, ringkasan biaya/request/token/cakupan harga, chart
-biaya harian, p50/p95/p99 latency, serta tabel agregat. Query dashboard hanya membaca
-metadata dari `llm_usage`; isi prompt dan response tidak digunakan.
+The dashboard defaults to `http://localhost:8501`.
 
-### Budget alert
+Send a request through the proxy:
 
-Threshold bersifat opsional dan dikonfigurasi dalam USD melalui `.env`:
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+`LLM_PROVIDER` supports `openai` (default), `groq`, and `gemini` through OpenAI-compatible endpoints; set `LLM_BASE_URL` explicitly for other providers. Streaming responses are not supported. If `DATABASE_URL` is left empty, the app still runs with console logging as a fallback.
+
+### Budget alerts
 
 ```bash
 DAILY_BUDGET_USD=10.00
@@ -94,16 +82,9 @@ MONTHLY_BUDGET_USD=200.00
 # ALERT_WEBHOOK_URL=https://example.com/hooks/llm-budget
 ```
 
-Tanpa `ALERT_WEBHOOK_URL`, alert ditulis sebagai JSON ke console. Jika URL diisi, proxy
-mengirim `POST` JSON berisi jenis periode, awal periode, threshold, dan biaya aktual.
-Alert tidak membawa prompt/response dan hanya dikirim sekali untuk kombinasi periode dan
-nilai threshold. Jalankan ulang `python -m llm_cost_tracker.migrate` setelah mengambil
-versi M3 untuk membuat tabel deduplikasi `budget_alerts`.
+Alert deduplication uses a `budget_alerts` table created by migration — re-run `python -m llm_cost_tracker.migrate` if upgrading an existing install.
 
-### Multi-tenant
-
-Mode multi-tenant bersifat opt-in agar instalasi single-tenant lama tetap kompatibel.
-Jalankan migrasi terbaru, buat tenant, lalu aktifkan mode tersebut:
+### Multi-tenant mode
 
 ```bash
 python -m llm_cost_tracker.migrate
@@ -113,91 +94,44 @@ python -m llm_cost_tracker.tenants create \
   --key-name production
 ```
 
-CLI menampilkan API key satu kali. Database hanya menyimpan SHA-256 hash, prefix untuk
-identifikasi operasional, dan waktu pencabutan. Simpan key tersebut di secret manager,
-bukan di repository. Setelah set `MULTI_TENANT_ENABLED=true`, aplikasi pemanggil wajib
-mengirim key tenant:
+The CLI prints the API key once. After setting `MULTI_TENANT_ENABLED=true`, calling applications must authenticate with the tenant key:
 
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'Authorization: Bearer llmct_REPLACE_WITH_TENANT_KEY' \
   -H 'Content-Type: application/json' \
-  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"Halo"}]}'
+  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-Dashboard meminta key yang sama dan hanya menampilkan usage, biaya, provider, serta
-percentile latency milik tenant tersebut. Alert budget juga dihitung dan dideduplikasi
-per tenant. Record sebelum M4 tetap memiliki `tenant_id = null` dan hanya terlihat saat
-mode multi-tenant tidak aktif.
-
-Cabut key yang bocor atau tidak digunakan dengan:
+Revoke a key with:
 
 ```bash
 python -m llm_cost_tracker.tenants revoke --slug acme --key-name production
 ```
 
-Secara default proxy meneruskan request ke OpenAI. `LLM_PROVIDER` juga mendukung `groq`
-dan `gemini` melalui endpoint OpenAI-compatible. Untuk provider lain, isi
-`LLM_BASE_URL` secara eksplisit.
+Records created before multi-tenant mode was enabled keep `tenant_id = null` and are only visible while the mode is off.
 
-Contoh request:
+### Access control (single-tenant)
 
-```bash
-curl http://127.0.0.1:8000/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"gpt-5-mini","messages":[{"role":"user","content":"Halo"}]}'
-```
+Set `PROXY_API_KEY` and send `Authorization: Bearer <PROXY_API_KEY>` from the calling application. In multi-tenant mode, use the tenant API key instead and ignore `PROXY_API_KEY`.
 
-Setiap request menghasilkan satu baris JSON di console dan satu record `llm_usage` di
-Postgres. Data hanya memuat request ID, provider, model, status HTTP, latency, token
-input/output/total, serta estimasi biaya USD. Isi prompt dan response tidak dicatat.
-Streaming belum didukung.
-
-Harga model dikelola dari satu sumber di
-`src/llm_cost_tracker/data/pricing.json`. Migrasi menyinkronkan harga tersebut ke tabel
-`model_pricing` dengan mekanisme upsert. Harga awal diverifikasi pada 25 Agustus 2026
-dari halaman resmi provider dan mencakup:
-
-| Provider | Model |
-|---|---|
-| OpenAI | `gpt-5-mini` |
-| Groq | `openai/gpt-oss-120b` |
-| Gemini | `gemini-2.5-flash` |
-
-Jika model belum terdaftar, request tetap disimpan tetapi `estimated_cost_usd` bernilai
-`null`. Untuk memperbarui harga, edit satu berkas JSON tersebut dan jalankan ulang
-migrasi. Bila `DATABASE_URL` tidak diisi, aplikasi tetap berjalan dengan console logging
-sebagai fallback.
-
-Untuk membatasi akses dalam mode single-tenant, isi `PROXY_API_KEY` lalu kirim
-`Authorization: Bearer <PROXY_API_KEY>` dari aplikasi pemanggil. Dalam mode
-multi-tenant, gunakan tenant API key dan abaikan `PROXY_API_KEY`.
-
-Jalankan tes dengan:
+### Testing
 
 ```bash
 pytest
 ```
 
-Tanpa `TEST_DATABASE_URL`, integration test PostgreSQL dilewati dan hanya unit test yang
-dijalankan. Untuk menjalankan semua tes terhadap database khusus yang aman dihapus:
+Without `TEST_DATABASE_URL`, PostgreSQL integration tests are skipped and only unit tests run. To run the full suite against a disposable database:
 
 ```bash
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/llm_cost_tracker_test \
   pytest -q
 ```
 
-Integration test menjalankan seluruh migrasi dua kali untuk memeriksa idempotensi,
-memastikan tiga seed pricing tersedia, lalu menguji persistence, autentikasi tenant,
-isolasi dashboard, dan deduplikasi budget alert. Database pada URL tersebut akan
-menjalankan `TRUNCATE` terhadap tabel aplikasi; jangan arahkan ke database development
-atau production.
+The integration tests run every migration twice to check idempotency, verify the seeded pricing rows, and exercise persistence, tenant authentication, dashboard isolation, and budget-alert deduplication. This target database gets `TRUNCATE`d between runs — never point it at a development or production database.
 
-Workflow GitHub Actions di `.github/workflows/ci.yml` otomatis menjalankan unit dan
-integration test dengan service PostgreSQL 16 untuk setiap push ke `main` dan pull
-request.
+The GitHub Actions workflow at `.github/workflows/ci.yml` runs unit and integration tests with a PostgreSQL 16 service on every push to `main` and on pull requests.
 
-## Catatan
+## Notes
 
-Jangan simpan isi prompt/response penuh kalau sensitif — cukup metadata (token count,
-model, biaya, latency) demi privasi data pengguna.
+Don't log full prompt/response content if it's sensitive — metadata (token count, model, cost, latency) is enough for cost tracking and keeps user data out of the store.
